@@ -1,98 +1,27 @@
-import torch
-from torch import nn
+import mlx.core as mx
+import mlx.nn as nn
 
 
-class RMSHeadNorm(nn.Module):
+class RMSNorm(nn.Module):
 
-    def __init__(
-        self,
-        hidden_size: int,
-        eps: float = 1e-6,
-    ) -> None:
+    def __init__(self, hidden_size: int, eps: float = 1e-6):
         super().__init__()
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.weight = mx.ones((hidden_size,))
 
-    @torch.compile
-    def rms_forward(
-        self,
-        x: torch.Tensor,
-    ) -> torch.Tensor:
+    def __call__(self, x: mx.array, residual: mx.array | None = None):
+        if residual is not None:
+            x = x + residual
+            residual = x
         orig_dtype = x.dtype
-        x = x.float()
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
+        x = x.astype(mx.float32)
+        variance = mx.mean(x * x, axis=-1, keepdims=True)
+        x = x * mx.rsqrt(variance + self.eps)
+        x = x.astype(orig_dtype) * self.weight
+        if residual is not None:
+            return x, residual
         return x
 
-    @torch.compile
-    def add_rms_forward(
-        self,
-        x: torch.Tensor,
-        residual: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        orig_dtype = x.dtype
-        x = x.float().add_(residual.float())
-        residual = x.to(orig_dtype)
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x, residual
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        residual: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if residual is None:
-            return self.rms_forward(x)
-        else:
-            return self.add_rms_forward(x, residual)
-
-
-class RMSDNorm(nn.Module): # different method so torch compile can have one specialized to shape D (hd * nh) and another to hd alone (above)
-
-    def __init__(
-        self,
-        hidden_size: int,
-        eps: float = 1e-6,
-    ) -> None:
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-
-    @torch.compile
-    def norm_forward(
-        self,
-        x: torch.Tensor,
-    ) -> torch.Tensor:
-        orig_dtype = x.dtype
-        x = x.float()
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x
-
-    @torch.compile
-    def add_norm_forward(
-        self,
-        x: torch.Tensor,
-        residual: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        orig_dtype = x.dtype
-        x = x.float().add_(residual.float())
-        residual = x.to(orig_dtype)
-        var = x.pow(2).mean(dim=-1, keepdim=True)
-        x.mul_(torch.rsqrt(var + self.eps))
-        x = x.to(orig_dtype).mul_(self.weight)
-        return x, residual
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        residual: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if residual is None:
-            return self.norm_forward(x)
-        else:
-            return self.add_norm_forward(x, residual)
+RMSHeadNorm = RMSNorm
+RMSDNorm = RMSNorm

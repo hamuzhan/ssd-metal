@@ -1,27 +1,26 @@
 from dataclasses import dataclass
-import torch
+import mlx.core as mx
 from ssd.engine.sequence import Sequence
 from abc import ABC, abstractmethod
 
 
 @dataclass
 class SpeculateResult:
-    speculations: torch.Tensor
-    logits_q: torch.Tensor
-    cache_hits: torch.Tensor | None = None
+    speculations: mx.array
+    logits_q: mx.array
+    cache_hits: mx.array | None = None
 
 
 @dataclass
 class VerifyResult:
     new_suffixes: list[list[int]]
     recovery_tokens: list[int]
-    eagle_acts: torch.Tensor | None = None  # Is this a tensor?
+    eagle_acts: mx.array | None = None
 
 
 class SpeculatorBase(ABC):
-    def __init__(self, lookahead: int, device: torch.device):
+    def __init__(self, lookahead: int):
         self.lookahead = lookahead
-        self.device = device
 
     @abstractmethod
     def prefill(self, seqs: list[Sequence], verify_result: VerifyResult) -> SpeculateResult:
@@ -33,9 +32,8 @@ class SpeculatorBase(ABC):
 
 
 class VerifierBase(ABC):
-    def __init__(self, lookahead: int, device: torch.device):
+    def __init__(self, lookahead: int):
         self.lookahead = lookahead
-        self.device = device
 
     @abstractmethod
     def prefill(self, seqs: list[Sequence], eagle: bool = False) -> VerifyResult:

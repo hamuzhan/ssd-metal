@@ -1,8 +1,9 @@
-<h1 align="center">Speculative Speculative Decoding</h1>
+<h1 align="center">SSD-Metal</h1>
+<h3 align="center">Speculative Speculative Decoding for Apple Silicon</h3>
 
-<h3 align="center">
+<h4 align="center">
   <a href="https://arxiv.org/pdf/2603.03251">Paper</a>
-</h3>
+</h4>
 
 <p align="center">
   <img width="800"
@@ -19,119 +20,237 @@ SSD is a new type of speculative decoding (SD). In normal SD, a small and fast m
 
 In SSD, they happen in parallel, on distinct hardware. The small model anticipates likely verification outcomes in advance, and speculates for all of them at once. If it guessed correctly, the speculation can be returned immediately so drafting overhead is eliminated entirely.
 
-This custom inference engine supports:
-- A reference implementation of the SSD algorithm
+### Apple Silicon Port
+
+This fork ports the entire SSD engine from CUDA/PyTorch to **Apple MLX/Metal**, exploiting Apple Silicon's unified memory architecture for zero-copy draft/target synchronization. All NVIDIA-specific dependencies (FlashInfer, Triton, sgl-kernel, NCCL, CUDA Graphs) are replaced with native MLX primitives and Metal compute shaders.
+
+| Feature | CUDA (original) | MLX/Metal (this fork) |
+|---|---|---|
+| Tensor ops | `torch.Tensor` (CUDA) | `mx.array` (unified memory) |
+| NN modules | `torch.nn.Module` | `mlx.nn.Module` |
+| Attention | FlashInfer + Triton | `mx.fast.scaled_dot_product_attention` |
+| Graph compilation | CUDA Graphs (903 lines) | `mx.compile()` (shape-polymorphic) |
+| Draft/Target sync | NCCL across GPUs | Direct function calls (zero-copy) |
+| Tensor parallelism | Multi-GPU all-reduce | Not needed (single unified GPU) |
+| RoPE | Precomputed cos/sin cache | `mx.fast.rope()` (Metal-accelerated) |
+
+This engine supports:
+- A reference implementation of the SSD algorithm on Apple Silicon
 - Optimized SD and autoregressive baselines
 - Qwen3 + Llama3 model families
-- Tensor Parallelism
-- PagedAttention, CUDAgraphs, torch compilation, prefix caching
+- PagedAttention with prefix caching
+- Built-in diagnostic CLI (`python -m ssd`)
 
-<div align="center">
-  <table><tr><td width="800">
-    <video src="https://github.com/user-attachments/assets/588eaa70-d6e5-4522-9e94-e54fc6074aba" />
-  </td></tr></table>
-</div>
+---
+
+## Requirements
+
+| Requirement | Minimum | Notes |
+|---|---|---|
+| **Mac** | Apple Silicon (M1/M2/M3/M4) | Intel Macs are not supported |
+| **macOS** | 14.0+ (Sonoma) | Metal 3 support required |
+| **Python** | 3.11 – 3.12 | 3.13 not yet tested |
+| **Homebrew** | Latest | For installing conda |
+| **Conda** | Miniforge recommended | Isolated environment |
+| **MLX** | >= 0.22.0 | Apple's ML framework |
+| **RAM** | 16 GB+ | 32 GB+ recommended for 8B models, 64 GB+ for larger |
+
+---
 
 ## Setup
 
-Requirements: Python 3.11+, CUDA >= 12.8. This code was written and tested on H100s. 
+> We **strongly recommend** using a conda environment. Installing into system Python can cause dependency conflicts. Conda provides a clean, isolated environment.
 
-If `uv` is not installed:
+### Option A: One-Click Install (recommended)
 
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# if `uv` is not found in this shell:
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Then: 
+The CLI has a built-in installer that handles everything automatically:
 
 ```bash
 git clone https://github.com/tanishqkumar/ssd && cd ssd
-uv sync                    # core SSD deps
-# uv sync --extra scripts  # add deps used by scripts/
-source .venv/bin/activate
-python -c "from ssd import LLM; print('ok')"
+python3 ssd/cli.py --install
 ```
 
-Set paths via environment variables. `SSD_HF_CACHE` should point to the HuggingFace **hub** directory — this is the directory that contains `models--org--name/` subdirectories (e.g. `/data/huggingface/hub`, not `/data/huggingface/`). `SSD_DATASET_DIR` should point to the directory containing the dataset subdirectories (`humaneval/`, `alpaca/`, etc).
+This will:
+1. Check for Homebrew (install if missing)
+2. Check for Conda/Miniforge (install if missing)
+3. Create a `ssd-metal` conda environment with Python 3.12
+4. Install MLX and all dependencies
+5. Run the full diagnostic suite to verify everything works
+
+### Option B: Manual Setup
+
+#### 1. Install Homebrew (if not installed)
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+#### 2. Install Miniforge (if conda not installed)
+
+```bash
+brew install miniforge
+conda init zsh  # or: conda init bash
+```
+
+Restart your terminal after `conda init`.
+
+#### 3. Create conda environment
+
+```bash
+conda create -n ssd-metal python=3.12 -y
+conda activate ssd-metal
+```
+
+#### 4. Clone and install
+
+```bash
+git clone https://github.com/tanishqkumar/ssd && cd ssd
+pip install -e .
+```
+
+This installs: `mlx`, `transformers`, `safetensors`, `xxhash`, `numpy`, `tqdm`, `tiktoken`.
+
+#### 5. Set environment variables
 
 ```bash
 export SSD_HF_CACHE=/path/to/huggingface/hub
 export SSD_DATASET_DIR=/path/to/processed_datasets
-export SSD_CUDA_ARCH=9.0   # 9.0=H100, 8.0=A100, 8.9=L40/4090
 ```
 
-### Download models + datasets
+`SSD_HF_CACHE` should point to the HuggingFace **hub** directory — the one containing `models--org--name/` subdirectories (e.g. `~/.cache/huggingface/hub`).
 
-If you already have the models downloaded via `huggingface-cli` or similar, you can skip straight to datasets — just make sure `SSD_HF_CACHE` points to the right place. The download scripts require the `scripts` extra: `uv sync --extra scripts`.
+Add these to your `~/.zshrc` or `~/.bashrc` to make them permanent.
+
+#### 6. Verify installation
 
 ```bash
-# models (uses SSD_HF_CACHE)
-python scripts/download_from_hf.py llama
-
-# datasets (writes to $HF_DATASETS_CACHE/processed_datasets)
-export HF_DATASETS_CACHE=/path/to  # parent of SSD_DATASET_DIR
-python scripts/get_data_from_hf.py --num-samples 10000
+python -m ssd
 ```
+
+---
+
+## Diagnostics
+
+SSD-Metal includes a professional diagnostic CLI that validates every component:
+
+```bash
+python -m ssd
+```
+
+```
+ ███████╗███████╗██████╗       ███╗   ███╗███████╗████████╗ █████╗ ██╗
+ ██╔════╝██╔════╝██╔══██╗      ████╗ ████║██╔════╝╚══██╔══╝██╔══██╗██║
+ ███████╗███████╗██║  ██║█████╗██╔████╔██║█████╗     ██║   ███████║██║
+ ╚════██║╚════██║██║  ██║╚════╝██║╚██╔╝██║██╔══╝     ██║   ██╔══██║██║
+ ███████║███████║██████╔╝      ██║ ╚═╝ ██║███████╗   ██║   ██║  ██║███████╗
+ ╚══════╝╚══════╝╚═════╝       ╚═╝     ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
+
+              Speculative Decoding Engine for Apple Silicon
+                        v0.3.0  ·  Diagnostics
+```
+
+The diagnostic runs 39 tests across 8 phases:
+
+| Phase | What it checks |
+|---|---|
+| Core Dependencies | mlx, transformers, safetensors, xxhash, numpy, tqdm, tiktoken |
+| Foundation Modules | Config, paths, SamplingParams, Sequence |
+| Layer Primitives | RMSNorm, SiluAndMul, RoPE, QKV/GateUp/Row linear, Embedding, LMHead, Sampler, Attention |
+| Kernel Functions | Metal KV cache store kernel |
+| Model Definitions | LlamaForCausalLM, Qwen3ForCausalLM, Eagle3DraftForCausalLM |
+| Engine Components | ModelRunner, DraftRunner, Scheduler, Verifier, SpeculatorUnified |
+| Tensor Operations | Basic ops, SDPA, rotary embeddings, sampling, attention pipeline, mask generation |
+| Integration | Full package import, LLM class hierarchy |
+
+---
 
 ## Usage
 
-All commands below run from inside the `bench/` directory. Large models (Llama-3 70B, Qwen-3 32B) take a few minutes for load/warmup/compile before generation starts. Always use `python -O` to disable debug overhead.
+### Download models
+
+```bash
+# Requires: pip install huggingface_hub datasets
+python scripts/download_from_hf.py llama
+```
 
 ### Benchmarks
 
-Use `--all` for full eval across four datasets. Since different data distributions are predictable to varying degrees, the speed of SD/SSD depends a lot on the dataset. Averaging over many prompts from many types of datasets 
-gives an overall picture. `--numseqs` is per-dataset, so `--numseqs 128 --all` runs 128 × 4 = 512 prompts total.
-
 ```bash
 cd bench
 
-# AR — Llama 70B, 4 GPUs
-python -O bench.py --llama --size 70 --gpus 4 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
+# Autoregressive — Llama 8B
+python -O bench.py --llama --size 8 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
 
-# Sync spec decode — 70B target + 1B draft, 4 GPUs, k=6
-python -O bench.py --llama --size 70 --gpus 4 --spec --k 6 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
+# Sync speculative decoding — 8B target + 1B draft, k=6
+python -O bench.py --llama --size 8 --spec --k 6 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
 
-# Async spec decode (SSD) — 70B target (4 GPUs) + 1B draft (1 GPU), k=7, f=3
-python -O bench.py --llama --size 70 --gpus 5 --spec --async --k 7 --f 3 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
+# Async speculative decoding (SSD) — k=7, f=3
+python -O bench.py --llama --size 8 --spec --async --k 7 --f 3 --b 1 --temp 0 --numseqs 128 --output_len 512 --all
 ```
 
-Use `--qwen --size 32` for Qwen models. See `bench/bench.py` for full args. For SGLang/vLLM baselines, see `bench/README.md`.
+Use `--qwen --size 32` for Qwen models. See `bench/bench.py` for full args.
 
 ### Chat
 
-Interactive streaming chat with Llama-3.1 70B only. Supports AR, sync SD, and async SD (SSD). Pass `--metrics` to print token count, speed, and TTFT after each response.
+Interactive streaming chat:
 
 ```bash
 cd bench
 
-# AR — 4 GPUs
-python -O chat.py --ssd --gpus 4
+# Autoregressive
+python -O chat.py --ssd
 
-# Sync spec decode — 4 GPUs, k=6
-python -O chat.py --ssd --spec --k 6 --gpus 4
+# Sync spec decode, k=6
+python -O chat.py --ssd --spec --k 6
 
-# Async spec decode (SSD) — 5 GPUs, k=7, f=3
-python -O chat.py --ssd --spec --async --k 7 --f 3 --gpus 5 --metrics
+# Async spec decode (SSD), k=7, f=3
+python -O chat.py --ssd --spec --async --k 7 --f 3 --metrics
 ```
 
-SGLang and vLLM chat backends are also supported (launches their servers automatically) for comparison:
+---
 
-```bash
-python -O chat.py --sglang        # spec decode
-python -O chat.py --sglang --ar   # autoregressive
-python -O chat.py --vllm          # spec decode
+## Technical Overview
+
+### Unified Memory Architecture
+
+Apple Silicon's unified memory eliminates the need for explicit data transfers between CPU and GPU. In the original CUDA implementation, draft and target models run on separate GPUs communicating via NCCL `send`/`recv`. In SSD-Metal, both models share the same address space:
+
+```
+Apple Silicon Unified Memory
+┌──────────────────────────────────────────────┐
+│  Target Model Weights ──┐                    │
+│  Draft Model Weights  ──┤ all mx.array,      │
+│  Target KV Cache      ──┤ backed by Metal    │
+│  Draft KV Cache       ──┤ buffers            │
+│  Tree Cache           ──┘                    │
+│                                              │
+│  Execution (single process):                 │
+│  1. target.run() → logits, hidden_states     │
+│  2. draft.speculate(hidden_states) → tokens  │
+│     ↑ zero-copy: same mx.array reference     │
+│  3. verify(logits_target, logits_draft)      │
+│  4. postprocess → append accepted tokens     │
+└──────────────────────────────────────────────┘
 ```
 
-### Roadmap
+### What was removed
 
-Features that will be supported in the near future: 
-- Draft data parallel (increase speculation cache size) on up to 4 devices to avoid getting compute bound
-- OpenAI-compatible inference over HTTP
-- New models and MoE support: GPT-OSS and Kimi-K2.5.
+- **903-line CUDA graph capture/replay system** — replaced by `mx.compile()` (shape-polymorphic, no bucket management)
+- **NCCL multi-process communication** — direct method calls in a single process
+- **FlashInfer + Triton kernels** — `mx.fast.scaled_dot_product_attention` + simple Metal kernels
+- **Tensor parallelism** (QKVParallel, RowParallel, all-reduce) — plain `mlx.nn.Linear` (single GPU)
+- **SharedMemory IPC** — unnecessary with unified memory
+- **~2,000 lines of NVIDIA-specific infrastructure**
 
-Contributions welcome! 
+### Key MLX synchronization points
+
+MLX uses lazy evaluation — computations are only executed when results are needed. Explicit `mx.eval()` calls are required:
+
+1. After model forward → `mx.eval(logits)` before sampling
+2. After sampling → `mx.eval(token_ids)` before `.tolist()`
+3. After verification → `mx.eval(recovery_tokens)` before postprocessing
+
+---
 
 ## Citation
 

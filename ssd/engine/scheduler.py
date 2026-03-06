@@ -1,5 +1,5 @@
 import time
-import torch
+import mlx.core as mx
 from collections import deque
 from transformers import AutoTokenizer
 
@@ -287,34 +287,25 @@ class Scheduler:
         seqs: list[Sequence],
         new_suffixes: list[list[int]],
         next_recovery_tokens: list[int],
-        eagle_acts: torch.Tensor | None = None
+        eagle_acts: mx.array | None = None
     ):
 
         for i, (seq, new_suffix, next_recovery_token) in enumerate(zip(seqs, new_suffixes, next_recovery_tokens)):
-            # ---- EOS/sequence metadata updates (non kv cache metadata) ----
             new_suffix, finished = self._handle_eos_and_max_new_tokens(seq, new_suffix)
-
-            # ---- kv cache updates to roll back to accepted idx (fwd makes kv cache for entire speculation) ----
             self._update_kv_caches(seq, new_suffix)
-
-            # ---- sequence metadata updates ----
             self._update_sequence_metadata(seq, new_suffix, next_recovery_token)
 
-            # ---- EAGLE activation updates for next speculation ----
             if eagle_acts is not None:
                 accepted_len = len(new_suffix)
                 idx = min(accepted_len - 1, eagle_acts.shape[1] - 1)
                 seq.last_target_hidden_state = eagle_acts[i, idx]
 
-                # Store extend data for next glue decode
-                # new_suffix = [recovery, spec_0, ..., spec_{n-1}]
-                # n_ext = number of accepted SPEC tokens (not counting recovery)
                 n_ext = min(accepted_len - 1, self.K)
                 seq.extend_count = n_ext
                 if n_ext > 0:
-                    seq.extend_eagle_acts = eagle_acts[i, :n_ext].clone()
-                    seq.extend_token_ids = torch.tensor(
-                        new_suffix[1:1+n_ext], dtype=torch.int64, device=eagle_acts.device)
+                    seq.extend_eagle_acts = mx.array(eagle_acts[i, :n_ext])
+                    seq.extend_token_ids = mx.array(
+                        new_suffix[1:1+n_ext], dtype=mx.int64)
                 else:
                     seq.extend_eagle_acts = None
                     seq.extend_token_ids = None

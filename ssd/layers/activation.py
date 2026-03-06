@@ -1,6 +1,5 @@
-import torch
-from torch import nn
-import torch.nn.functional as F
+import mlx.core as mx
+import mlx.nn as nn
 
 
 class SiluAndMul(nn.Module):
@@ -8,7 +7,6 @@ class SiluAndMul(nn.Module):
     def __init__(self):
         super().__init__()
 
-    @torch.compile
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x, y = x.chunk(2, -1)
-        return F.silu(x) * y
+    def __call__(self, x: mx.array) -> mx.array:
+        x, y = mx.split(x, 2, axis=-1)
+        return nn.silu(x) * y

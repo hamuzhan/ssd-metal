@@ -1,18 +1,18 @@
 from dataclasses import dataclass
-import torch
+import mlx.core as mx
 
 
 @dataclass
 class Context:
     is_prefill: bool = False
     is_jit: bool = False
-    cu_seqlens_q: torch.Tensor | None = None
-    cu_seqlens_k: torch.Tensor | None = None
+    cu_seqlens_q: mx.array | None = None
+    cu_seqlens_k: mx.array | None = None
     max_seqlen_q: int = 0
     max_seqlen_k: int = 0
-    slot_mapping: torch.Tensor | None = None
-    context_lens: torch.Tensor | None = None
-    block_tables: torch.Tensor | None = None
+    slot_mapping: mx.array | None = None
+    context_lens: mx.array | None = None
+    block_tables: mx.array | None = None
 
 _CONTEXT = Context()
 

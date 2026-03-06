@@ -4,26 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssd"
-version = "0.2.0"
+version = "0.3.0"
 authors = [{ name = "Tanishq Kumar" }]
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"
-description = "Async tree-based speculative decoding research engine"
+description = "Async tree-based speculative decoding research engine (Apple Silicon / MLX)"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "torch==2.8.0",
-    "triton==3.4.0",
-    "transformers==4.57.1",
-    "xxhash==3.5.0",
-    "numpy==2.3.3",
-    "safetensors==0.6.2",
-    "tqdm==4.67.1",
-    "flashinfer-python==0.5.2",
-    "sgl-kernel==0.3.17.post1",
-    "nvidia-cutlass-dsl==4.2.1",
-    "wandb==0.22.0",
-    "hf_transfer",
+    "mlx>=0.22.0",
+    "transformers>=4.45.0",
+    "xxhash>=3.5.0",
+    "numpy>=2.0.0",
+    "safetensors>=0.4.0",
+    "tqdm>=4.65.0",
     "tiktoken",
 ]
 
