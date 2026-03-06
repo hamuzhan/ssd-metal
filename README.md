@@ -66,7 +66,7 @@ This engine supports:
 The CLI has a built-in installer that handles everything automatically:
 
 ```bash
-git clone https://github.com/tanishqkumar/ssd && cd ssd
+git https://github.com/hamuzhan/ssd-metal.git && cd ssd-metal
 python3 ssd/cli.py --install
 ```
 
